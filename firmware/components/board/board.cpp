@@ -206,7 +206,9 @@ esp_err_t board_control_init() {
     }
 
     const BoardPins& pins = board_pins();
-    err = configure_output_gpio(pins.backlight_gpio, 0);
+    // LCD_BL is active-low on both Waveshare revisions. Start dark so V1
+    // cannot flash before the panel has finished its reset/init sequence.
+    err = configure_output_gpio(pins.backlight_gpio, 1);
     if (err != ESP_OK) {
         return err;
     }
@@ -287,9 +289,11 @@ esp_err_t lcd_backlight_set(bool enabled) {
         }
     }
 
+    // Waveshare's brightness presets are inverted (255 brightness == duty 0),
+    // so a low LCD_BL level is full-on and a high level is off.
     return gpio_set_level(
         static_cast<gpio_num_t>(board_pins().backlight_gpio),
-        enabled ? 1 : 0);
+        enabled ? 0 : 1);
 }
 
 }  // namespace asteroid_pilot::hardware
