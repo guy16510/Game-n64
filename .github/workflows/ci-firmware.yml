@@ -18,25 +18,37 @@ jobs:
     container:
       image: espressif/idf:v6.0.3
 
+    defaults:
+      run:
+        shell: bash
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Configure ESP32-S3
         working-directory: firmware
-        run: idf.py set-target esp32s3
+        run: |
+          source "$IDF_PATH/export.sh" >/dev/null
+          idf.py set-target esp32s3
 
       - name: Build firmware
         working-directory: firmware
-        run: idf.py build
+        run: |
+          source "$IDF_PATH/export.sh" >/dev/null
+          idf.py build
 
       - name: Report image sizes
         working-directory: firmware
-        run: idf.py size
+        run: |
+          source "$IDF_PATH/export.sh" >/dev/null
+          idf.py size
 
       - name: Produce single flashable image
         working-directory: firmware
-        run: idf.py merge-bin -o asteroid-pilot-merged.bin -f raw
+        run: |
+          source "$IDF_PATH/export.sh" >/dev/null
+          idf.py merge-bin -o asteroid-pilot-merged.bin -f raw
 
       - name: Record SHA256
         working-directory: firmware
