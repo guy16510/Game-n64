@@ -68,10 +68,11 @@ if(AP_BUILD_JET)
 
     file(GLOB JET_SOURCES CONFIGURE_DEPENDS "${jet_SOURCE_DIR}/src/*.cpp")
     add_library(jet_native STATIC ${JET_SOURCES})
-    target_include_directories(jet_native PUBLIC
-        host/jet_config
-        "${jet_SOURCE_DIR}/src"
-    )
+    target_include_directories(jet_native PUBLIC host/jet_config)
+    # Jet is a pinned third-party dependency. Treat its public headers as
+    # system headers so our warnings-as-errors policy applies to our code,
+    # rather than turning upstream Jet warnings into local CI failures.
+    target_include_directories(jet_native SYSTEM PUBLIC "${jet_SOURCE_DIR}/src")
     target_compile_features(jet_native PUBLIC cxx_std_17)
 
     add_executable(ap_jet_smoke
