@@ -3,8 +3,6 @@
 #include <cstdint>
 
 #include "driver/gpio.h"
-#include "esp_io_expander.h"
-#include "esp_io_expander_tca9554.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "sdkconfig.h"
@@ -52,15 +50,20 @@ constexpr BoardPins kV2Pins{
     .io_expander_address = 0x20U,
 };
 
-constexpr std::uint32_t kExioTouchInt = 1U << 0U;
-constexpr std::uint32_t kExioBacklightEnable = 1U << 1U;
-constexpr std::uint32_t kExioImuInt1 = 1U << 2U;
-constexpr std::uint32_t kExioImuInt2 = 1U << 3U;
-constexpr std::uint32_t kExioLcdReset = 1U << 5U;
+constexpr std::uint8_t kTcaOutputRegister = 0x01U;
+constexpr std::uint8_t kTcaConfigRegister = 0x03U;
+constexpr std::uint8_t kExioTouchInt = 1U << 0U;
+constexpr std::uint8_t kExioBacklightEnable = 1U << 1U;
+constexpr std::uint8_t kExioImuInt1 = 1U << 2U;
+constexpr std::uint8_t kExioImuInt2 = 1U << 3U;
+constexpr std::uint8_t kExioLcdReset = 1U << 5U;
+constexpr int kI2cTimeoutMs = 100;
+constexpr std::uint32_t kSystemI2cSpeedHz = 400000U;
 
 bool g_initialized = false;
 i2c_master_bus_handle_t g_system_i2c = nullptr;
-esp_io_expander_handle_t g_io_expander = nullptr;
+i2c_master_dev_handle_t g_io_expander = nullptr;
+std::uint8_t g_expander_output = 0xFFU;
 
 esp_err_t configure_output_gpio(int gpio_number, int initial_level) {
     if (gpio_number < 0) {
@@ -97,40 +100,76 @@ esp_err_t initialize_system_i2c() {
     return i2c_new_master_bus(&config, &g_system_i2c);
 }
 
+esp_err_t expander_read_register(std::uint8_t reg, std::uint8_t* value) {
+    if (g_io_expander == nullptr || value == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return i2c_master_transmit_receive(
+        g_io_expander,
+        &reg,
+        sizeof(reg),
+        value,
+        sizeof(*value),
+        kI2cTimeoutMs);
+}
+
+esp_err_t expander_write_register(std::uint8_t reg, std::uint8_t value) {
+    if (g_io_expander == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const std::uint8_t payload[2] = {reg, value};
+    return i2c_master_transmit(g_io_expander, payload, sizeof(payload), kI2cTimeoutMs);
+}
+
+esp_err_t expander_set_level(std::uint8_t mask, bool high) {
+    if (high) {
+        g_expander_output = static_cast<std::uint8_t>(g_expander_output | mask);
+    } else {
+        g_expander_output = static_cast<std::uint8_t>(g_expander_output & ~mask);
+    }
+    return expander_write_register(kTcaOutputRegister, g_expander_output);
+}
+
 esp_err_t initialize_expander() {
-    esp_err_t err = esp_io_expander_new_i2c_tca9554(
-        g_system_i2c,
-        ESP_IO_EXPANDER_I2C_TCA9554_ADDRESS_000,
-        &g_io_expander);
+    if (board_revision() != BoardRevision::V2) {
+        return ESP_OK;
+    }
+
+    const BoardPins& pins = board_pins();
+    i2c_device_config_t device_config{};
+    device_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    device_config.device_address = pins.io_expander_address;
+    device_config.scl_speed_hz = kSystemI2cSpeedHz;
+
+    esp_err_t err = i2c_master_bus_add_device(g_system_i2c, &device_config, &g_io_expander);
     if (err != ESP_OK) {
         return err;
     }
 
-    const std::uint32_t inputs = kExioTouchInt | kExioImuInt1 | kExioImuInt2;
-    err = esp_io_expander_set_dir(g_io_expander, inputs, IO_EXPANDER_INPUT);
+    std::uint8_t config = 0xFFU;
+    err = expander_read_register(kTcaConfigRegister, &config);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = expander_read_register(kTcaOutputRegister, &g_expander_output);
     if (err != ESP_OK) {
         return err;
     }
 
-    if (board_revision() == BoardRevision::V2) {
-        err = esp_io_expander_set_dir(
-            g_io_expander,
-            kExioBacklightEnable | kExioLcdReset,
-            IO_EXPANDER_OUTPUT);
-        if (err != ESP_OK) {
-            return err;
-        }
-        err = esp_io_expander_set_level(g_io_expander, kExioBacklightEnable, 0);
-        if (err != ESP_OK) {
-            return err;
-        }
-        err = esp_io_expander_set_level(g_io_expander, kExioLcdReset, 1);
-        if (err != ESP_OK) {
-            return err;
-        }
-    }
+    // Match Waveshare's V2 BSP without taking ownership of unrelated EXIO pins.
+    // Inputs: touch INT, IMU INT1/INT2. Outputs: backlight enable and LCD reset.
+    config = static_cast<std::uint8_t>(config | kExioTouchInt | kExioImuInt1 | kExioImuInt2);
+    config = static_cast<std::uint8_t>(config & ~(kExioBacklightEnable | kExioLcdReset));
 
-    return ESP_OK;
+    // Set safe output levels before changing the direction bits so the panel
+    // cannot briefly flash or reset from stale TCA9554 output-latch values.
+    g_expander_output = static_cast<std::uint8_t>(
+        (g_expander_output & ~kExioBacklightEnable) | kExioLcdReset);
+    err = expander_write_register(kTcaOutputRegister, g_expander_output);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return expander_write_register(kTcaConfigRegister, config);
 }
 
 }  // namespace
@@ -196,17 +235,17 @@ esp_err_t lcd_hardware_reset() {
     }
 
     if (board_revision() == BoardRevision::V2) {
-        esp_err_t err = esp_io_expander_set_level(g_io_expander, kExioLcdReset, 1);
+        esp_err_t err = expander_set_level(kExioLcdReset, true);
         if (err != ESP_OK) {
             return err;
         }
         vTaskDelay(pdMS_TO_TICKS(30));
-        err = esp_io_expander_set_level(g_io_expander, kExioLcdReset, 0);
+        err = expander_set_level(kExioLcdReset, false);
         if (err != ESP_OK) {
             return err;
         }
         vTaskDelay(pdMS_TO_TICKS(250));
-        err = esp_io_expander_set_level(g_io_expander, kExioLcdReset, 1);
+        err = expander_set_level(kExioLcdReset, true);
         if (err != ESP_OK) {
             return err;
         }
@@ -242,10 +281,7 @@ esp_err_t lcd_backlight_set(bool enabled) {
     }
 
     if (board_revision() == BoardRevision::V2) {
-        const esp_err_t expander_err = esp_io_expander_set_level(
-            g_io_expander,
-            kExioBacklightEnable,
-            enabled ? 1 : 0);
+        const esp_err_t expander_err = expander_set_level(kExioBacklightEnable, enabled);
         if (expander_err != ESP_OK) {
             return expander_err;
         }
