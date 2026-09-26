@@ -1,0 +1,22 @@
+menu "Asteroid Pilot hardware"
+
+choice AP_BOARD_REVISION
+    prompt "Waveshare ESP32-S3-Touch-LCD-3.49B revision"
+    default AP_BOARD_V2
+
+config AP_BOARD_V1
+    bool "V1"
+    help
+        Original board revision. LCD reset is GPIO21, backlight is GPIO8,
+        and EXIO interrupt is GPIO42.
+
+config AP_BOARD_V2
+    bool "V2 / Rev1.1"
+    help
+        Board revision shipped by Waveshare on/after June 8, 2026. LCD reset
+        is routed through TCA9554 bit 5, backlight PWM is GPIO42, LCD TE is
+        GPIO21, and EXIO interrupt is GPIO8.
+
+endchoice
+
+endmenu

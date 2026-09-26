@@ -13,14 +13,21 @@ permissions:
 
 jobs:
   firmware:
-    name: ESP-IDF 6.0.3 build
+    name: ESP-IDF 6.0.3 build (${{ matrix.board }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [v1, v2]
     container:
       image: espressif/idf:v6.0.3
 
     defaults:
       run:
         shell: bash
+
+    env:
+      AP_BOARD: ${{ matrix.board }}
 
     steps:
       - name: Checkout
@@ -30,7 +37,7 @@ jobs:
         working-directory: firmware
         run: |
           source "$IDF_PATH/export.sh" >/dev/null
-          idf.py set-target esp32s3
+          idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.${AP_BOARD}.defaults" set-target esp32s3
 
       - name: Build firmware
         working-directory: firmware
@@ -48,19 +55,19 @@ jobs:
         working-directory: firmware
         run: |
           source "$IDF_PATH/export.sh" >/dev/null
-          idf.py merge-bin -o asteroid-pilot-merged.bin -f raw
+          idf.py merge-bin -o "asteroid-pilot-${AP_BOARD}-merged.bin" -f raw
 
       - name: Record SHA256
         working-directory: firmware
-        run: sha256sum build/asteroid-pilot-merged.bin | tee build/SHA256SUMS
+        run: sha256sum "build/asteroid-pilot-${AP_BOARD}-merged.bin" | tee build/SHA256SUMS
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: esp32s3-firmware
+          name: esp32s3-firmware-${{ matrix.board }}
           if-no-files-found: error
           path: |
-            firmware/build/asteroid-pilot-merged.bin
+            firmware/build/asteroid-pilot-${{ matrix.board }}-merged.bin
             firmware/build/SHA256SUMS
             firmware/build/asteroid_pilot_firmware.bin
             firmware/build/asteroid_pilot_firmware.elf
