@@ -7,6 +7,14 @@ on:
         description: 'Successful ESP32-S3 Firmware CI run ID whose exact artifact should be flashed'
         required: true
         type: string
+      board_revision:
+        description: 'Physical Waveshare board revision'
+        required: true
+        default: 'v2'
+        type: choice
+        options:
+          - v2
+          - v1
       serial_port:
         description: 'Serial device visible to the self-hosted runner'
         required: true
@@ -19,7 +27,7 @@ permissions:
 
 jobs:
   hil:
-    name: Flash exact CI artifact on Waveshare hardware
+    name: Flash exact CI artifact on Waveshare ${{ inputs.board_revision }} hardware
     runs-on: [self-hosted, linux, esp32-s3, waveshare-349b]
     timeout-minutes: 15
 
@@ -30,7 +38,7 @@ jobs:
       - name: Download exact firmware artifact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: esp32s3-firmware
+          name: esp32s3-firmware-${{ inputs.board_revision }}
           path: hil-firmware
           run-id: ${{ inputs.firmware_run_id }}
           github-token: ${{ github.token }}
@@ -51,19 +59,20 @@ jobs:
           --chip esp32s3
           --port '${{ inputs.serial_port }}'
           --baud 921600
-          write-flash 0x0 hil-firmware/asteroid-pilot-merged.bin
+          write-flash 0x0 'hil-firmware/asteroid-pilot-${{ inputs.board_revision }}-merged.bin'
 
-      - name: Validate boot diagnostics
+      - name: Validate boot and hardware diagnostics
         run: >-
           python3 tools/hil.py
           --port '${{ inputs.serial_port }}'
-          --timeout 30
+          --board '${{ inputs.board_revision }}'
+          --timeout 45
           --report hil-report.json
 
       - name: Upload HIL evidence
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: hil-evidence
+          name: hil-evidence-${{ inputs.board_revision }}
           if-no-files-found: warn
           path: hil-report.json

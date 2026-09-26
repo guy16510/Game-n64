@@ -13,8 +13,12 @@ permissions:
 
 jobs:
   firmware:
-    name: ESP-IDF 6.0.3 build
+    name: ESP-IDF 6.0.3 build (${{ matrix.board }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [v1, v2]
     container:
       image: espressif/idf:v6.0.3
 
@@ -22,15 +26,21 @@ jobs:
       run:
         shell: bash
 
+    env:
+      AP_BOARD: ${{ matrix.board }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validate host flashing tools
+        run: python3 -m py_compile tools/flash_firmware.py tools/validate_merged.py tools/hil.py
 
       - name: Configure ESP32-S3
         working-directory: firmware
         run: |
           source "$IDF_PATH/export.sh" >/dev/null
-          idf.py set-target esp32s3
+          idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.${AP_BOARD}.defaults" set-target esp32s3
 
       - name: Build firmware
         working-directory: firmware
@@ -48,19 +58,25 @@ jobs:
         working-directory: firmware
         run: |
           source "$IDF_PATH/export.sh" >/dev/null
-          idf.py merge-bin -o asteroid-pilot-merged.bin -f raw
+          idf.py merge-bin -o "asteroid-pilot-${AP_BOARD}-merged.bin" -f raw
+
+      - name: Validate merged flash layout
+        run: >-
+          python3 tools/validate_merged.py
+          --build-dir firmware/build
+          --image "firmware/build/asteroid-pilot-${AP_BOARD}-merged.bin"
 
       - name: Record SHA256
         working-directory: firmware
-        run: sha256sum build/asteroid-pilot-merged.bin | tee build/SHA256SUMS
+        run: sha256sum "build/asteroid-pilot-${AP_BOARD}-merged.bin" | tee build/SHA256SUMS
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: esp32s3-firmware
+          name: esp32s3-firmware-${{ matrix.board }}
           if-no-files-found: error
           path: |
-            firmware/build/asteroid-pilot-merged.bin
+            firmware/build/asteroid-pilot-${{ matrix.board }}-merged.bin
             firmware/build/SHA256SUMS
             firmware/build/asteroid_pilot_firmware.bin
             firmware/build/asteroid_pilot_firmware.elf
@@ -68,4 +84,5 @@ jobs:
             firmware/build/bootloader/bootloader.bin
             firmware/build/partition_table/partition-table.bin
             firmware/build/flash_args
+            firmware/build/flasher_args.json
             firmware/build/project_description.json
