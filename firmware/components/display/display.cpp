@@ -125,8 +125,8 @@ esp_err_t display_init() {
     }
 
     esp_lcd_panel_io_spi_config_t io_config{};
-    io_config.cs_gpio_num = pins.lcd_cs;
-    io_config.dc_gpio_num = -1;
+    io_config.cs_gpio_num = static_cast<gpio_num_t>(pins.lcd_cs);
+    io_config.dc_gpio_num = static_cast<gpio_num_t>(-1);
     io_config.spi_mode = 3;
     io_config.pclk_hz = 40 * 1000 * 1000;
     io_config.trans_queue_depth = 2;
@@ -151,7 +151,7 @@ esp_err_t display_init() {
     vendor_config.flags.use_qspi_interface = 1;
 
     esp_lcd_panel_dev_config_t panel_config{};
-    panel_config.reset_gpio_num = -1;
+    panel_config.reset_gpio_num = static_cast<gpio_num_t>(-1);
     panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
     panel_config.bits_per_pixel = 16;
     panel_config.vendor_config = &vendor_config;
