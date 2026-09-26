@@ -1,0 +1,69 @@
+name: Hardware in the Loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      firmware_run_id:
+        description: 'Successful ESP32-S3 Firmware CI run ID whose exact artifact should be flashed'
+        required: true
+        type: string
+      serial_port:
+        description: 'Serial device visible to the self-hosted runner'
+        required: true
+        default: '/dev/ttyACM0'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  hil:
+    name: Flash exact CI artifact on Waveshare hardware
+    runs-on: [self-hosted, linux, esp32-s3, waveshare-349b]
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Download exact firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32s3-firmware
+          path: hil-firmware
+          run-id: ${{ inputs.firmware_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Install HIL tools
+        run: python3 -m pip install --user 'esptool>=4.8,<5' 'pyserial>=3.5,<4'
+
+      - name: Verify target chip
+        run: >-
+          python3 -m esptool
+          --chip esp32s3
+          --port '${{ inputs.serial_port }}'
+          chip-id
+
+      - name: Flash exact merged binary
+        run: >-
+          python3 -m esptool
+          --chip esp32s3
+          --port '${{ inputs.serial_port }}'
+          --baud 921600
+          write-flash 0x0 hil-firmware/asteroid-pilot-merged.bin
+
+      - name: Validate boot diagnostics
+        run: >-
+          python3 tools/hil.py
+          --port '${{ inputs.serial_port }}'
+          --timeout 30
+          --report hil-report.json
+
+      - name: Upload HIL evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hil-evidence
+          if-no-files-found: warn
+          path: hil-report.json

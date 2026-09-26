@@ -1,0 +1,46 @@
+name: Render Determinism
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-render:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure renderer
+        run: cmake -S . -B build -DAP_BUILD_JET=ON -DAP_WARNINGS_AS_ERRORS=ON
+
+      - name: Build renderer
+        run: cmake --build build --target ap_jet_smoke --parallel
+
+      - name: Render twice
+        run: |
+          ./build/ap_jet_smoke build/frame-a.ppm | tee build/frame-a.json
+          ./build/ap_jet_smoke build/frame-b.ppm | tee build/frame-b.json
+
+      - name: Require deterministic framebuffer
+        run: |
+          cmp build/frame-a.ppm build/frame-b.ppm
+          sha256sum build/frame-a.ppm build/frame-b.ppm | tee build/render-sha256.txt
+
+      - name: Upload render evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministic-render
+          if-no-files-found: error
+          path: |
+            build/frame-a.ppm
+            build/frame-a.json
+            build/frame-b.json
+            build/render-sha256.txt
