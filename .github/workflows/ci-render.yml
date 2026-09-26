@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Configure renderer
         run: cmake -S . -B build -DAP_BUILD_JET=ON -DAP_WARNINGS_AS_ERRORS=ON
@@ -34,11 +34,21 @@ jobs:
           cmp build/frame-a.ppm build/frame-b.ppm
           sha256sum build/frame-a.ppm build/frame-b.ppm | tee build/render-sha256.txt
 
+      - name: Require reviewed golden render
+        shell: bash
+        run: |
+          actual="$(sha256sum build/frame-a.ppm | awk '{print $1}')"
+          expected="$(awk '{print $1}' tests/golden/jet_smoke.sha256)"
+          echo "expected=$expected"
+          echo "actual=$actual"
+          test "$actual" = "$expected"
+
       - name: Upload render evidence
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: deterministic-render
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
             build/frame-a.ppm
             build/frame-a.json

@@ -25,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout harness
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Download exact firmware artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: esp32s3-firmware
           path: hil-firmware
@@ -62,7 +62,7 @@ jobs:
 
       - name: Upload HIL evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: hil-evidence
           if-no-files-found: warn
