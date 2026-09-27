@@ -18,6 +18,11 @@ from typing import Any
 
 import serial
 
+EXPECTED_CORE_DIGEST = "0x29c50c6c2dce480e"
+MIN_FLASH_BYTES = 16 * 1024 * 1024
+MIN_PSRAM_BYTES = 7 * 1024 * 1024
+MIN_PSRAM_TEST_BYTES = 512 * 1024
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -56,11 +61,13 @@ def main() -> int:
 
         required = {
             "hardware_info",
+            "platform_test",
+            "memory_test",
             "display_test",
             "imu_test",
             "touch_test",
             "core_self_test",
-            "BOOT_OK",
+            "DIAGNOSTICS_COMPLETE",
         }
 
         while time.monotonic() < deadline:
@@ -87,7 +94,12 @@ def main() -> int:
             if isinstance(event, str):
                 events[event] = payload
 
-            if required.issubset(events):
+            # DIAGNOSTICS_COMPLETE is emitted on both success and failure, so
+            # a bad board exits quickly instead of waiting for a BOOT_OK event
+            # that must never be emitted on failure.
+            if required.issubset(events) and (
+                "BOOT_OK" in events or "BOOT_FAIL" in events
+            ):
                 break
 
     failures: list[str] = []
@@ -102,10 +114,30 @@ def main() -> int:
             failures.append(
                 f"firmware board revision {hardware.get('board_revision')!r} does not match physical selection {args.board!r}"
             )
-        if as_int(hardware.get("flash_bytes")) < 15 * 1024 * 1024:
+        if as_int(hardware.get("flash_bytes")) < MIN_FLASH_BYTES:
             failures.append(f"flash size too small: {hardware.get('flash_bytes')!r}")
-        if as_int(hardware.get("psram_bytes")) < 7 * 1024 * 1024:
+        if as_int(hardware.get("psram_bytes")) < MIN_PSRAM_BYTES:
             failures.append(f"PSRAM size too small: {hardware.get('psram_bytes')!r}")
+
+    platform = events.get("platform_test")
+    if platform is None:
+        failures.append("missing platform_test event")
+    elif platform.get("status") != "PASS":
+        failures.append(f"platform identity/capacity diagnostic failed: {platform}")
+    else:
+        for field in ("chip_ok", "flash_ok", "psram_capacity_ok"):
+            if platform.get(field) is not True:
+                failures.append(f"platform diagnostic did not assert {field}: {platform}")
+
+    memory = events.get("memory_test")
+    if memory is None:
+        failures.append("missing memory_test event")
+    elif memory.get("status") != "PASS":
+        failures.append(f"PSRAM write/read diagnostic failed: {memory}")
+    elif as_int(memory.get("psram_tested_bytes")) < MIN_PSRAM_TEST_BYTES:
+        failures.append(
+            f"PSRAM test exercised too little memory: {memory.get('psram_tested_bytes')!r}"
+        )
 
     display = events.get("display_test")
     if display is None:
@@ -145,12 +177,29 @@ def main() -> int:
             failures.append(f"core self-test failed: {core}")
         if as_int(core.get("frames")) != 120:
             failures.append(f"core self-test frame count mismatch: {core.get('frames')!r}")
+        if core.get("digest") != EXPECTED_CORE_DIGEST:
+            failures.append(f"core self-test digest mismatch: {core.get('digest')!r}")
+        if core.get("expected_digest") != EXPECTED_CORE_DIGEST:
+            failures.append(
+                f"firmware expected digest does not match HIL contract: {core.get('expected_digest')!r}"
+            )
 
-    boot = events.get("BOOT_OK")
-    if boot is None:
+    completed = events.get("DIAGNOSTICS_COMPLETE")
+    if completed is None:
+        failures.append("missing DIAGNOSTICS_COMPLETE event")
+    elif completed.get("status") != "PASS":
+        failures.append(f"firmware diagnostics did not pass: {completed}")
+
+    boot_ok = events.get("BOOT_OK")
+    boot_fail = events.get("BOOT_FAIL")
+    if boot_fail is not None:
+        failures.append(f"firmware emitted BOOT_FAIL: {boot_fail}")
+    if boot_ok is None:
         failures.append("missing BOOT_OK event")
-    elif boot.get("status") != "DIAGNOSTICS_PASS":
-        failures.append(f"firmware diagnostics did not pass: {boot}")
+    elif boot_ok.get("status") != "PASS":
+        failures.append(f"BOOT_OK event was not PASS: {boot_ok}")
+    elif boot_ok.get("board_revision") != args.board:
+        failures.append(f"BOOT_OK board revision mismatch: {boot_ok}")
 
     passed = not failures
     report = {
@@ -161,12 +210,17 @@ def main() -> int:
         "raw_serial": raw_lines,
         "validation_scope": {
             "boot": "HIL_VERIFIED" if passed else "UNTESTED",
+            "chip_identity": "HIL_VERIFIED" if passed else "UNTESTED",
+            "flash_capacity": "HIL_VERIFIED" if passed else "UNTESTED",
+            "psram_capacity": "HIL_VERIFIED" if passed else "UNTESTED",
+            "psram_write_read": "HIL_VERIFIED" if passed else "UNTESTED",
             "display_transport": "HIL_VERIFIED" if passed else "UNTESTED",
             "display_physical_pixels": "UNTESTED",
             "imu_presence": "HIL_VERIFIED" if passed else "UNTESTED",
             "imu_calibrated_motion": "UNTESTED",
             "touch_presence": "HIL_VERIFIED" if passed else "UNTESTED",
             "touch_coordinates": "UNTESTED",
+            "deterministic_core": "HIL_VERIFIED" if passed else "UNTESTED",
         },
     }
     Path(args.report).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -177,8 +231,8 @@ def main() -> int:
         return 1
 
     print(
-        "HIL diagnostics passed: boot, flash/PSRAM, display transport, QMI8658 presence, "
-        "touch presence, and shared core are verified on the physical board."
+        "HIL diagnostics passed: chip identity, flash/PSRAM capacity, PSRAM write/read, "
+        "display transport, QMI8658 presence, touch presence, and deterministic core are verified."
     )
     print("Physical pixel appearance, calibrated IMU motion, and touch coordinates remain unverified.")
     return 0
