@@ -20,7 +20,7 @@ jobs:
       matrix:
         board: [v1, v2]
     container:
-      image: espressif/idf:v6.0.3
+      image: espressif/idf:v6.0.3@sha256:54278f2c01e6e759502e2f04c9103589c17528923426f4d63193490c7a08f555
 
     defaults:
       run:
@@ -33,8 +33,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: Validate host flashing tools
-        run: python3 -m py_compile tools/flash_firmware.py tools/validate_merged.py tools/hil.py
+      - name: Validate host flashing and trust tools
+        run: |
+          python3 -m py_compile \
+            tools/flash_firmware.py \
+            tools/validate_merged.py \
+            tools/hil.py \
+            tools/make_firmware_manifest.py \
+            tools/validate_hil_run.py \
+            tools/validate_firmware_artifact.py \
+            tools/test_hil_security.py
+          python3 tools/test_hil_security.py
 
       - name: Configure ESP32-S3
         working-directory: firmware
@@ -70,6 +79,17 @@ jobs:
         working-directory: firmware
         run: sha256sum "build/asteroid-pilot-${AP_BOARD}-merged.bin" | tee build/SHA256SUMS
 
+      - name: Create firmware provenance manifest
+        run: >-
+          python3 tools/make_firmware_manifest.py
+          --board "${AP_BOARD}"
+          --image "firmware/build/asteroid-pilot-${AP_BOARD}-merged.bin"
+          --output "firmware/build/firmware-manifest.json"
+          --source-sha "${GITHUB_SHA}"
+          --source-ref "${GITHUB_REF_NAME}"
+          --workflow-run-id "${GITHUB_RUN_ID}"
+          --idf-version "6.0.3"
+
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -78,6 +98,8 @@ jobs:
           path: |
             firmware/build/asteroid-pilot-${{ matrix.board }}-merged.bin
             firmware/build/SHA256SUMS
+            firmware/build/firmware-manifest.json
+            firmware/build/dependencies.lock
             firmware/build/asteroid_pilot_firmware.bin
             firmware/build/asteroid_pilot_firmware.elf
             firmware/build/asteroid_pilot_firmware.map
