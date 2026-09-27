@@ -99,7 +99,7 @@ jobs:
             firmware/build/asteroid-pilot-${{ matrix.board }}-merged.bin
             firmware/build/SHA256SUMS
             firmware/build/firmware-manifest.json
-            firmware/build/dependencies.lock
+            firmware/dependencies.lock
             firmware/build/asteroid_pilot_firmware.bin
             firmware/build/asteroid_pilot_firmware.elf
             firmware/build/asteroid_pilot_firmware.map
