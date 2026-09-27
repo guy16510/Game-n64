@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       firmware_run_id:
-        description: 'Successful ESP32-S3 Firmware CI run ID whose exact artifact should be flashed'
+        description: 'Successful main-branch ESP32-S3 Firmware CI run ID whose exact artifact should be flashed'
         required: true
         type: string
       board_revision:
@@ -27,13 +27,22 @@ permissions:
 
 jobs:
   hil:
-    name: Flash exact CI artifact on Waveshare ${{ inputs.board_revision }} hardware
+    name: Flash exact trusted CI artifact on Waveshare ${{ inputs.board_revision }} hardware
     runs-on: [self-hosted, linux, esp32-s3, waveshare-349b]
     timeout-minutes: 15
 
     steps:
-      - name: Checkout harness
+      - name: Checkout trusted HIL harness
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Reject untrusted firmware workflow runs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/validate_hil_run.py
+          --run-id '${{ inputs.firmware_run_id }}'
+          --repository '${{ github.repository }}'
+          --output hil-source-run.json
 
       - name: Download exact firmware artifact
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
@@ -43,23 +52,26 @@ jobs:
           run-id: ${{ inputs.firmware_run_id }}
           github-token: ${{ github.token }}
 
-      - name: Install HIL tools
-        run: python3 -m pip install --user 'esptool>=4.8,<5' 'pyserial>=3.5,<4'
-
-      - name: Verify target chip
+      - name: Validate downloaded artifact provenance and digest
         run: >-
-          python3 -m esptool
-          --chip esp32s3
-          --port '${{ inputs.serial_port }}'
-          chip-id
+          python3 tools/validate_firmware_artifact.py
+          --board '${{ inputs.board_revision }}'
+          --image 'hil-firmware/asteroid-pilot-${{ inputs.board_revision }}-merged.bin'
+          --manifest 'hil-firmware/firmware-manifest.json'
+          --source-run hil-source-run.json
 
-      - name: Flash exact merged binary
+      - name: Install pinned HIL tools
+        run: python3 -m pip install --user -r tools/requirements-hil.txt
+
+      - name: Flash and verify exact merged binary
         run: >-
-          python3 -m esptool
-          --chip esp32s3
+          python3 tools/flash_firmware.py
+          --board '${{ inputs.board_revision }}'
           --port '${{ inputs.serial_port }}'
           --baud 921600
-          write-flash 0x0 'hil-firmware/asteroid-pilot-${{ inputs.board_revision }}-merged.bin'
+          --image 'hil-firmware/asteroid-pilot-${{ inputs.board_revision }}-merged.bin'
+          --checksum-file 'hil-firmware/SHA256SUMS'
+          --require-checksum
 
       - name: Validate boot and hardware diagnostics
         run: >-
@@ -75,4 +87,8 @@ jobs:
         with:
           name: hil-evidence-${{ inputs.board_revision }}
           if-no-files-found: warn
-          path: hil-report.json
+          path: |
+            hil-report.json
+            hil-source-run.json
+            hil-firmware/firmware-manifest.json
+            hil-firmware/SHA256SUMS
